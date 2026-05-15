@@ -451,6 +451,17 @@ public class BlockMachine extends BlockContainer implements ISpecialBounds, IBlo
 		int meta = world.getBlockMetadata(x, y, z);
 		TileEntityBasicBlock tileEntity = (TileEntityBasicBlock)world.getTileEntity(x, y, z);
 
+		// ADICIONE ESTA VERIFICAÇÃO
+		if(tileEntity == null)
+		{
+			// Retorna um ícone padrão caso o TileEntity seja null
+			if(icons[meta] != null && icons[meta][0] != null)
+			{
+				return icons[meta][0];
+			}
+			return BASE_ICON;
+		}
+
 		switch(blockType)
 		{
 			case MACHINE_BLOCK_1:
@@ -469,7 +480,7 @@ public class BlockMachine extends BlockContainer implements ISpecialBounds, IBlo
 					case 7:
 						TileEntityFactory factory = (TileEntityFactory)tileEntity;
 						active = MekanismUtils.isActive(world, x, y, z);
-						
+
 						return factoryIcons[factory.tier.ordinal()][factory.recipeType.ordinal()][MekanismUtils.getBaseOrientation(side, tileEntity.facing)+(active ? 6 : 0)];
 					default:
 						return icons[meta][0];
@@ -496,7 +507,7 @@ public class BlockMachine extends BlockContainer implements ISpecialBounds, IBlo
 						return icons[meta][0];
 				}
 		}
-		
+
 		return null;
 	}
 

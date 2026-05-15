@@ -72,10 +72,14 @@ public class FusionReactor implements IFusionReactor
 
 	public boolean burning = false;
 	public boolean activelyCooled = true;
-	
+
 	public boolean updatedThisTick;
 
 	public boolean formed = false;
+
+	//Safety limits to prevent numeric overflow exploits
+	private static final double MAX_SAFE_TEMPERATURE = 1E12;
+	private static final int MAX_VAPORIZE_PER_TICK = 10000000;
 
 	public FusionReactor(TileEntityReactorController c)
 	{
@@ -86,6 +90,12 @@ public class FusionReactor implements IFusionReactor
 	public void addTemperatureFromEnergyInput(double energyAdded)
 	{
 		plasmaTemperature += laserHeatCoefficient * energyAdded / plasmaHeatCapacity * (isBurning() ? 1 : 10);
+
+		//Clamp temperature to prevent overflow
+		if(plasmaTemperature > MAX_SAFE_TEMPERATURE)
+		{
+			plasmaTemperature = MAX_SAFE_TEMPERATURE;
+		}
 	}
 
 	public boolean hasHohlraum()
@@ -93,7 +103,7 @@ public class FusionReactor implements IFusionReactor
 		if(controller != null)
 		{
 			ItemStack hohlraum = controller.inventory[0];
-			
+
 			if(hohlraum != null && hohlraum.getItem() instanceof ItemHohlraum)
 			{
 				GasStack gasStack = ((ItemHohlraum)hohlraum.getItem()).getGas(hohlraum);
@@ -111,12 +121,31 @@ public class FusionReactor implements IFusionReactor
 		{
 			lastPlasmaTemperature = plasmaTemperature;
 			lastCaseTemperature = caseTemperature;
-			
+
 			return;
 		}
-		
+
+		//Skip simulation if multiblock is not formed
+		if(!formed)
+		{
+			burning = false;
+			return;
+		}
+
+		//Validate and clamp temperatures before simulation
+		if(Double.isInfinite(plasmaTemperature) || Double.isNaN(plasmaTemperature) || plasmaTemperature > MAX_SAFE_TEMPERATURE)
+		{
+			plasmaTemperature = 0;
+			burning = false;
+		}
+		if(Double.isInfinite(caseTemperature) || Double.isNaN(caseTemperature) || caseTemperature > MAX_SAFE_TEMPERATURE)
+		{
+			caseTemperature = 0;
+			burning = false;
+		}
+
 		updatedThisTick = false;
-		
+
 		//Only thermal transfer happens unless we're hot enough to burn.
 		if(plasmaTemperature >= burnTemperature)
 		{
@@ -125,14 +154,14 @@ public class FusionReactor implements IFusionReactor
 			{
 				vaporiseHohlraum();
 			}
-			
+
 			//Only inject fuel if we're burning
 			if(burning)
 			{
 				injectFuel();
 				int fuelBurned = burnFuel();
 				neutronFlux(fuelBurned);
-				
+
 				if(fuelBurned == 0)
 				{
 					burning = false;
@@ -142,7 +171,7 @@ public class FusionReactor implements IFusionReactor
 		else {
 			burning = false;
 		}
-		
+
 		//Perform the heat transfer calculations
 		transferHeat();
 
@@ -159,6 +188,18 @@ public class FusionReactor implements IFusionReactor
 	{
 		lastPlasmaTemperature = plasmaTemperature < 1E-1 ? 0 : plasmaTemperature;
 		lastCaseTemperature = caseTemperature < 1E-1 ? 0 : caseTemperature;
+
+		//Ensure temperatures stay within safe bounds
+		if(lastPlasmaTemperature > MAX_SAFE_TEMPERATURE)
+		{
+			lastPlasmaTemperature = MAX_SAFE_TEMPERATURE;
+			plasmaTemperature = MAX_SAFE_TEMPERATURE;
+		}
+		if(lastCaseTemperature > MAX_SAFE_TEMPERATURE)
+		{
+			lastCaseTemperature = MAX_SAFE_TEMPERATURE;
+			caseTemperature = MAX_SAFE_TEMPERATURE;
+		}
 	}
 
 	public void vaporiseHohlraum()
@@ -176,9 +217,9 @@ public class FusionReactor implements IFusionReactor
 		int amountNeeded = getFuelTank().getNeeded();
 		int amountAvailable = 2*min(getDeuteriumTank().getStored(), getTritiumTank().getStored());
 		int amountToInject = min(amountNeeded, min(amountAvailable, injectionRate));
-		
+
 		amountToInject -= amountToInject % 2;
-		
+
 		getDeuteriumTank().draw(amountToInject / 2, true);
 		getTritiumTank().draw(amountToInject / 2, true);
 		getFuelTank().receive(new GasStack(GasRegistry.getGas("fusionFuelDT"), amountToInject), true);
@@ -187,10 +228,16 @@ public class FusionReactor implements IFusionReactor
 	public int burnFuel()
 	{
 		int fuelBurned = (int)min(getFuelTank().getStored(), max(0, lastPlasmaTemperature - burnTemperature)*burnRatio);
-		
+
 		getFuelTank().draw(fuelBurned, true);
 		plasmaTemperature += energyPerFuel * fuelBurned / plasmaHeatCapacity;
-		
+
+		//Clamp temperature after fuel burn
+		if(plasmaTemperature > MAX_SAFE_TEMPERATURE)
+		{
+			plasmaTemperature = MAX_SAFE_TEMPERATURE;
+		}
+
 		return fuelBurned;
 	}
 
@@ -199,7 +246,7 @@ public class FusionReactor implements IFusionReactor
 		int neutronsRemaining = fuelBurned;
 		List<INeutronCapture> list = new ArrayList<INeutronCapture>(neutronCaptors);
 		Collections.shuffle(list);
-		
+
 		for(INeutronCapture captor: neutronCaptors)
 		{
 			if(neutronsRemaining <= 0)
@@ -209,7 +256,7 @@ public class FusionReactor implements IFusionReactor
 
 			neutronsRemaining = captor.absorbNeutrons(neutronsRemaining);
 		}
-		
+
 		controller.radiateNeutrons(neutronsRemaining);
 	}
 
@@ -219,36 +266,81 @@ public class FusionReactor implements IFusionReactor
 		double plasmaCaseHeat = plasmaCaseConductivity * (lastPlasmaTemperature - lastCaseTemperature);
 		plasmaTemperature -= plasmaCaseHeat / plasmaHeatCapacity;
 		caseTemperature += plasmaCaseHeat / caseHeatCapacity;
-		
+
+		//Clamp case temperature after heat transfer
+		if(caseTemperature > MAX_SAFE_TEMPERATURE)
+		{
+			caseTemperature = MAX_SAFE_TEMPERATURE;
+		}
+		if(plasmaTemperature < 0)
+		{
+			plasmaTemperature = 0;
+		}
+
 		//Transfer from casing to water if necessary
 		if(activelyCooled)
 		{
 			double caseWaterHeat = caseWaterConductivity * lastCaseTemperature;
 			int waterToVaporize = (int)(steamTransferEfficiency * caseWaterHeat / enthalpyOfVaporization);
+
+			//Detect and correct numeric overflow conditions
+			if(waterToVaporize > 1000000000)
+			{
+				waterToVaporize = 1000000000;
+				caseTemperature = 0;
+				plasmaTemperature = 0;
+				burning = false;
+				Mekanism.logger.warn("Fusion Reactor overflow detected at " + controller.xCoord + "," + controller.yCoord + "," + controller.zCoord);
+			}
+
 			waterToVaporize = min(waterToVaporize, min(getWaterTank().getFluidAmount(), getSteamTank().getCapacity() - getSteamTank().getFluidAmount()));
-			
+
+			//Process water vaporization
 			if(waterToVaporize > 0)
 			{
 				getWaterTank().drain(waterToVaporize, true);
 				getSteamTank().fill(new FluidStack(FluidRegistry.getFluid("steam"), waterToVaporize), true);
+
+				caseWaterHeat = waterToVaporize * enthalpyOfVaporization / steamTransferEfficiency;
+				caseTemperature -= caseWaterHeat / caseHeatCapacity;
 			}
-			
-			caseWaterHeat = waterToVaporize * enthalpyOfVaporization / steamTransferEfficiency;
-			caseTemperature -= caseWaterHeat / caseHeatCapacity;
+			else if(waterToVaporize < 0)
+			{
+				//Negative value indicates overflow, reset
+				caseTemperature = 0;
+			}
 
 			for(IHeatTransfer source : heatTransfers)
 			{
 				source.simulateHeat();
 			}
-			
+
 			applyTemperatureChange();
 		}
 
 		//Transfer from casing to environment
 		double caseAirHeat = caseAirConductivity * lastCaseTemperature;
-		
+
+		//Clamp energy generation to prevent overflow exploits
+		double energyToAdd = caseAirHeat * thermocoupleEfficiency;
+		if(energyToAdd > 1E11)
+		{
+			energyToAdd = 1E11;
+			caseTemperature = 0;
+			plasmaTemperature = 0;
+			burning = false;
+			Mekanism.logger.warn("Fusion Reactor energy overflow detected at " + controller.xCoord + "," + controller.yCoord + "," + controller.zCoord);
+		}
+
 		caseTemperature -= caseAirHeat / caseHeatCapacity;
-		setBufferedEnergy(getBufferedEnergy() + caseAirHeat * thermocoupleEfficiency);
+
+		//Ensure temperature stays non-negative
+		if(caseTemperature < 0)
+		{
+			caseTemperature = 0;
+		}
+
+		setBufferedEnergy(getBufferedEnergy() + energyToAdd);
 	}
 
 	@Override
@@ -290,6 +382,15 @@ public class FusionReactor implements IFusionReactor
 	@Override
 	public void setBufferedEnergy(double energy)
 	{
+		//Validate energy bounds
+		if(energy > controller.getMaxEnergy())
+		{
+			energy = controller.getMaxEnergy();
+		}
+		if(energy < 0 || Double.isNaN(energy) || Double.isInfinite(energy))
+		{
+			energy = 0;
+		}
 		controller.setEnergy(energy);
 	}
 
@@ -302,6 +403,11 @@ public class FusionReactor implements IFusionReactor
 	@Override
 	public void setPlasmaTemp(double temp)
 	{
+		//Validate temperature bounds
+		if(temp > MAX_SAFE_TEMPERATURE || Double.isInfinite(temp) || Double.isNaN(temp))
+		{
+			temp = 0;
+		}
 		plasmaTemperature = temp;
 	}
 
@@ -314,6 +420,11 @@ public class FusionReactor implements IFusionReactor
 	@Override
 	public void setCaseTemp(double temp)
 	{
+		//Validate temperature bounds
+		if(temp > MAX_SAFE_TEMPERATURE || Double.isInfinite(temp) || Double.isNaN(temp))
+		{
+			temp = 0;
+		}
 		caseTemperature = temp;
 	}
 
@@ -327,7 +438,7 @@ public class FusionReactor implements IFusionReactor
 	{
 		AxisAlignedBB death_zone = AxisAlignedBB.getBoundingBox(controller.xCoord - 1, controller.yCoord - 3, controller.zCoord - 1 ,controller.xCoord + 2, controller.yCoord, controller.zCoord + 2);
 		List<Entity> entitiesToDie = controller.getWorldObj().getEntitiesWithinAABB(Entity.class, death_zone);
-		
+
 		for(Entity entity : entitiesToDie)
 		{
 			entity.attackEntityFrom(DamageSource.magic, 50000F);
@@ -340,14 +451,14 @@ public class FusionReactor implements IFusionReactor
 		{
 			block.setReactor(null);
 		}
-		
+
 		//Don't remove from controller
 		controller.setReactor(this);
 		reactorBlocks.clear();
 		neutronCaptors.clear();
 		formed = false;
 		burning = burning && keepBurning;
-		
+
 		if(!controller.getWorldObj().isRemote)
 		{
 			Mekanism.packetHandler.sendToDimension(new TileEntityMessage(Coord4D.get(controller), controller.getNetworkedData(new ArrayList())), controller.getWorldObj().provider.dimensionId);
@@ -362,7 +473,8 @@ public class FusionReactor implements IFusionReactor
 		Coord4D controllerPosition = Coord4D.get(controller);
 		Coord4D centreOfReactor = controllerPosition.getFromSide(ForgeDirection.DOWN, 2);
 
-		unformMultiblock(true);
+		//Preserve burning state based on parameter
+		unformMultiblock(keepBurning);
 
 		reactorBlocks.add(controller);
 
@@ -371,21 +483,21 @@ public class FusionReactor implements IFusionReactor
 			unformMultiblock(keepBurning);
 			return;
 		}
-		
+
 		if(!addSides(centreOfReactor))
 		{
 			unformMultiblock(keepBurning);
 			return;
 		}
-		
+
 		if(!centreIsClear(centreOfReactor))
 		{
 			unformMultiblock(keepBurning);
 			return;
 		}
-		
+
 		formed = true;
-		
+
 		if(!controller.getWorldObj().isRemote)
 		{
 			Mekanism.packetHandler.sendToDimension(new TileEntityMessage(Coord4D.get(controller), controller.getNetworkedData(new ArrayList())), controller.getWorldObj().provider.dimensionId);
@@ -443,12 +555,12 @@ public class FusionReactor implements IFusionReactor
 			{
 				reactorBlocks.add((IReactorBlock)tile);
 				((IReactorBlock)tile).setReactor(this);
-				
+
 				if(tile instanceof INeutronCapture)
 				{
 					neutronCaptors.add((INeutronCapture)tile);
 				}
-				
+
 				if(tile instanceof IHeatTransfer)
 				{
 					heatTransfers.add((IHeatTransfer)tile);
@@ -471,7 +583,7 @@ public class FusionReactor implements IFusionReactor
 				for(int z = -1; z <= 1; z++)
 				{
 					Coord4D trans = centre.clone().translate(x, y, z);
-					
+
 					if(!trans.isAirBlock(controller.getWorldObj()))
 					{
 						return false;
@@ -493,17 +605,18 @@ public class FusionReactor implements IFusionReactor
 	public void setInjectionRate(int rate)
 	{
 		injectionRate = rate;
-		
+
 		int capRate = Math.max(1, rate);
-		
+
 		controller.waterTank.setCapacity(TileEntityReactorController.MAX_WATER*capRate);
 		controller.steamTank.setCapacity(TileEntityReactorController.MAX_STEAM*capRate);
-		
+
+		//Clamp fluid amounts to new capacity
 		if(controller.waterTank.getFluid() != null)
 		{
 			controller.waterTank.getFluid().amount = Math.min(controller.waterTank.getFluid().amount, controller.waterTank.getCapacity());
 		}
-		
+
 		if(controller.steamTank.getFluid() != null)
 		{
 			controller.steamTank.getFluid().amount = Math.min(controller.steamTank.getFluid().amount, controller.steamTank.getCapacity());
@@ -595,6 +708,12 @@ public class FusionReactor implements IFusionReactor
 	public void transferHeatTo(double heat)
 	{
 		heatToAbsorb += heat;
+
+		//Clamp heat absorption
+		if(heatToAbsorb > MAX_SAFE_TEMPERATURE * caseHeatCapacity)
+		{
+			heatToAbsorb = MAX_SAFE_TEMPERATURE * caseHeatCapacity;
+		}
 	}
 
 	@Override
@@ -608,6 +727,12 @@ public class FusionReactor implements IFusionReactor
 	{
 		caseTemperature += heatToAbsorb / caseHeatCapacity;
 		heatToAbsorb = 0;
+
+		//Clamp temperature after change
+		if(caseTemperature > MAX_SAFE_TEMPERATURE)
+		{
+			caseTemperature = MAX_SAFE_TEMPERATURE;
+		}
 
 		return caseTemperature;
 	}
@@ -623,7 +748,7 @@ public class FusionReactor implements IFusionReactor
 	{
 		return null;
 	}
-	
+
 	@Override
 	public ItemStack[] getInventory()
 	{
