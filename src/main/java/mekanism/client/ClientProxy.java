@@ -126,7 +126,7 @@ public class ClientProxy extends CommonProxy
 
 				if(MachineType.get(stack) == MachineType.PERSONAL_CHEST)
 				{
-					InventoryPersonalChest inventory = new InventoryPersonalChest(entityplayer);
+					InventoryPersonalChest inventory = new InventoryPersonalChest(stack);
 					FMLClientHandler.instance().displayGuiScreen(entityplayer, new GuiPersonalChest(entityplayer.inventory, inventory, hotbarSlot));
 					entityplayer.openContainer.windowId = windowId;
 				}
