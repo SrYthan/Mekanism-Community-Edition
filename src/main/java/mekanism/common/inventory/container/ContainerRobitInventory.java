@@ -43,7 +43,26 @@ public class ContainerRobitInventory extends Container
 	@Override
 	public boolean canInteractWith(EntityPlayer entityplayer)
 	{
-		return !robit.isDead;
+		//Validate robit is alive, player is within range, and player is the owner
+		if(robit.isDead)
+		{
+			return false;
+		}
+
+		//Check distance to prevent remote inventory manipulation
+		if(entityplayer.getDistanceSqToEntity(robit) > 64.0D)
+		{
+			return false;
+		}
+
+		//Verify owner to prevent unauthorized access
+		String owner = robit.getOwnerName();
+		if(owner != null && !owner.isEmpty() && !owner.equals(entityplayer.getCommandSenderName()))
+		{
+			return false;
+		}
+
+		return true;
 	}
 
 	@Override
