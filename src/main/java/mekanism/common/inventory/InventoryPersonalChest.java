@@ -10,7 +10,7 @@ import net.minecraft.nbt.NBTTagList;
 public class InventoryPersonalChest extends InventoryBasic
 {
 	public EntityPlayer entityPlayer;
-	public ItemStack itemStack;
+	public int hotbarSlot;
 
 	public boolean reading;
 
@@ -18,14 +18,7 @@ public class InventoryPersonalChest extends InventoryBasic
 	{
 		super("PersonalChest", false, 55);
 		entityPlayer = player;
-
-		read();
-	}
-
-	public InventoryPersonalChest(ItemStack stack)
-	{
-		super("PersonalChest", false, 55);
-		itemStack = stack;
+		hotbarSlot = player.inventory.currentItem;
 
 		read();
 	}
@@ -71,10 +64,10 @@ public class InventoryPersonalChest extends InventoryBasic
 		if(getStack() != null)
 		{
 			if (getStack().getItem() instanceof ISustainedInventory) {
-                            ((ISustainedInventory)getStack().getItem()).setInventory(tagList, getStack());
-                        } else {
-                            System.out.println("Avoiding a server crash as : " + getStack().getItem().getClass().getName() + " is not a sustained inventory.");
-                        }
+				((ISustainedInventory)getStack().getItem()).setInventory(tagList, getStack());
+			} else {
+				System.out.println("Avoiding a server crash as : " + getStack().getItem().getClass().getName() + " is not a sustained inventory.");
+			}
 		}
 	}
 
@@ -85,7 +78,7 @@ public class InventoryPersonalChest extends InventoryBasic
 			return;
 		}
 
-                if (getStack() != null && !(getStack().getItem() instanceof ISustainedInventory)) return;
+		if (getStack() != null && !(getStack().getItem() instanceof ISustainedInventory)) return;
 		reading = true;
 
 		NBTTagList tagList = ((ISustainedInventory)getStack().getItem()).getInventory(getStack());
@@ -109,6 +102,6 @@ public class InventoryPersonalChest extends InventoryBasic
 
 	public ItemStack getStack()
 	{
-		return itemStack != null ? itemStack : entityPlayer.getCurrentEquippedItem();
+		return entityPlayer.inventory.mainInventory[hotbarSlot];
 	}
 }

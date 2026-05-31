@@ -36,7 +36,7 @@ public class PacketPersonalChest implements IMessageHandler<PersonalChestMessage
 
 					if(MachineType.get(stack) == MachineType.PERSONAL_CHEST)
 					{
-						InventoryPersonalChest inventory = new InventoryPersonalChest(stack);
+						InventoryPersonalChest inventory = new InventoryPersonalChest(player);
 						MekanismUtils.openPersonalChestGui((EntityPlayerMP)player, null, inventory, false);
 					}
 				}
